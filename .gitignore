@@ -1,0 +1,13 @@
+# DATA FILES (DO NOT PUSH)
+*.txt
+*.json
+refinery_checkpoint.txt
+
+# PYTHON ENVIRONMENT
+__pycache__/
+venv/
+.env
+
+# OS FILES
+.DS_Store
+Thumbs.db
