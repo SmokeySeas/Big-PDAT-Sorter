@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Path Refinery Staging</title>
+    <style>
+        body { background: #0b0f14; color: white; font-family: sans-serif; display: grid; grid-template-columns: 350px 1fr; height: 100vh; margin: 0; }
+        #sidebar { border-right: 1px solid #333; overflow-y: auto; padding: 10px; }
+        #viewer { padding: 40px; display: flex; flex-direction: column; gap: 20px; }
+        .node-card { padding: 15px; border: 1px solid #444; margin-bottom: 10px; cursor: pointer; border-radius: 8px; transition: 0.2s; }
+        .node-card:hover { background: #1a222d; }
+        .context-box { background: #05070a; padding: 20px; border-radius: 12px; font-family: monospace; line-height: 1.6; color: #aaa; }
+        #vContext { white-space: pre-wrap; }
+        .btn { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; }
+        .approve { background: #50c878; color: black; }
+        .reject { background: #ff5a5a; color: white; }
+    </style>
+</head>
+<body>
+    <div id="sidebar"><h3>Staging Queue</h3><div id="nodeList"></div></div>
+    <div id="viewer">
+        <h1 id="vTitle">Select a node</h1>
+        <p id="vDesc" style="font-size: 1.2rem;"></p>
+        <div class="context-box" id="vContext">Source text will appear here...</div>
+        <div id="controls" style="display: none;">
+            <button class="btn approve" onclick="action('approve')">Approve (Move to Map)</button>
+            <button class="btn reject" onclick="action('reject')">Discard Node</button>
+        </div>
+    </div>
+
+    <script>
+        let currentNode = null;
+        async function load() {
+            const res = await fetch('/api/nodes');
+            const nodes = await res.json();
+            document.getElementById('nodeList').innerHTML = nodes.map(n => `
+                <div class="node-card" onclick="viewNode('${n.id}')">
+                    <b>${n.title}</b><br><small>${n.category}</small>
+                </div>
+            `).join('');
+            window.nodes = nodes;
+        }
+
+        function viewNode(id) {
+            currentNode = window.nodes.find(n => n.id === id);
+            document.getElementById('vTitle').innerText = currentNode.title;
+            document.getElementById('vDesc').innerText = currentNode.description;
+            document.getElementById('vContext').innerText = currentNode.source_context || "No context saved.";
+            document.getElementById('controls').style.display = 'flex';
+        }
+
+        async function action(type) {
+            await fetch(`/api/${type}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id: currentNode.id})
+            });
+            load();
+            document.getElementById('controls').style.display = 'none';
+        }
+        load();
+
+        // Add this inside your <script> tag in staging.html
+let previousCount = 0;
+
+async function autoRefresh() {
+    const res = await fetch('/api/nodes');
+    const nodes = await res.json();
+    
+    if (nodes.length !== previousCount) {
+        renderNodes(nodes);
+        previousCount = nodes.length;
+        console.log("New data detected from Distillery...");
+    }
+}
+
+function renderNodes(nodes) {
+    window.nodes = nodes;
+    document.getElementById('nodeList').innerHTML = nodes.map(n => `
+        <div class="node-card" onclick="viewNode('${n.id}')">
+            <div style="font-size: 0.8rem; color: #50c878;">${n.category}</div>
+            <b>${n.title}</b>
+        </div>
+    `).join('');
+}
+
+// Start the watcher
+setInterval(autoRefresh, 5000); 
+load(); // Initial load
+    </script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shiny Path Mapper</title>
+    <style>
+        :root {
+            --bg: #0b0f14;
+            --panel: #0f1720;
+            --panel2: #0c131b;
+            --border: rgba(255,255,255,0.10);
+            --border2: rgba(255,255,255,0.16);
+            --text: rgba(255,255,255,0.92);
+            --muted: rgba(255,255,255,0.65);
+            --dim: rgba(255,255,255,0.35);
+            --edge: rgba(255,255,255,0.14);
+            --nodeFill: rgba(255,255,255,0.06);
+            --nodeStroke: rgba(255,255,255,0.22);
+            --hubFill: rgba(255,255,255,0.10);
+            --hubStroke: rgba(255,255,255,0.50);
+            --good: rgba(80, 200, 120, 0.9);
+            --radius: 14px;
+            --font: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        }
+
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+
+        #mapView {
+            display: grid;
+            grid-template-columns: 1fr minmax(320px, 420px);
+            gap: 14px;
+            height: 100vh;
+            padding: 14px;
+            box-sizing: border-box;
+        }
+
+        #mapCanvasPanel {
+            position: relative;
+            background: radial-gradient(1200px 800px at 30% 25%, rgba(255,255,255,0.04), transparent 60%), var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+        }
+
+        #graphSvg { width: 100%; height: 100%; display: block; }
+
+        select.filterSelect, .modal-overlay select {
+            background-color: var(--panel2) !important;
+            color: var(--text) !important;
+            border: 1px solid var(--border2);
+            padding: 6px;
+            border-radius: 8px;
+        }
+        select option { background-color: #161c24; color: white; }
+
+        .edge { stroke: var(--edge); stroke-width: 1.2; transition: stroke 0.3s; }
+        .node { cursor: pointer; outline: none; }
+        .node-shape { fill: var(--nodeFill); stroke: var(--nodeStroke); stroke-width: 1.4; transition: all 0.2s; }
+        
+        @keyframes nodePulse {
+            0% { stroke-width: 1.4; stroke-opacity: 1; }
+            50% { stroke-width: 5.0; stroke-opacity: 0.4; }
+            100% { stroke-width: 1.4; stroke-opacity: 1; }
+        }
+
+        .status-active .node-shape {
+            stroke: var(--good);
+            animation: nodePulse 2s infinite ease-in-out;
+            filter: drop-shadow(0 0 5px var(--good));
+        }
+
+        .hub .node-shape { fill: var(--hubFill); stroke: var(--hubStroke); stroke-width: 2.5; }
+        .node-label { fill: var(--text); font-size: 11px; pointer-events: none; text-anchor: middle; }
+        .hub .node-label { font-size: 13px; font-weight: 700; text-transform: uppercase; }
+
+        #mapControls {
+            position: absolute; top: 15px; left: 15px; z-index: 10;
+            display: flex; gap: 8px; padding: 8px;
+            background: rgba(12,18,26,0.85); backdrop-filter: blur(10px);
+            border-radius: 12px; border: 1px solid var(--border);
+        }
+
+        .mapBtn, .actionBtn, .filterSelect {
+            background: rgba(255,255,255,0.06); border: 1px solid var(--border2);
+            color: white; padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 11px;
+        }
+
+        #mapDetails {
+            background: var(--panel); border: 1px solid var(--border);
+            border-radius: var(--radius); display: grid; grid-template-rows: auto 1fr auto;
+        }
+
+        .details-section { padding: 16px; border-bottom: 1px solid var(--border); }
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+<div id="mapView">
+    <div id="mapCanvasPanel">
+        <div id="mapControls">
+            <input type="text" id="mapSearch" class="filterSelect" placeholder="Search..." oninput="renderGraph()" style="width: 100px;">
+            <select id="viewFilter" class="filterSelect" onchange="renderGraph()">
+                <option value="All">All Categories</option>
+                <option value="AI/ML">AI/ML</option>
+                <option value="Career">Career</option>
+                <option value="Personal">Personal</option>
+                <option value="Research">Research</option>
+            </select>
+            <button class="mapBtn" onclick="renderGraph()">Recenter</button>
+            <button class="mapBtn" onclick="openNewPathModal()">+ New [N]</button>
+            <button class="mapBtn" onclick="exportData()">Export</button>
+            <button class="mapBtn" onclick="importData()">Import [I]</button>
+        </div>
+        <svg id="graphSvg" viewBox="0 0 1000 700"></svg>
+    </div>
+
+    <aside id="mapDetails">
+        <div class="details-section" id="detailsHeader">
+            <div style="font-size: 18px; font-weight: 700;">Select a Node</div>
+        </div>
+        <div class="details-section" id="detailsBody" style="border:none; overflow-y: auto;"></div>
+        <div class="details-section" id="detailsFooter" style="border-top: 1px solid var(--border); display: flex; gap: 8px;"></div>
+    </aside>
+</div>
+
+<div id="newPathModal" class="modal-overlay">
+    <div style="background:var(--panel); padding:30px; border-radius:var(--radius); border:1px solid var(--border); width:420px;">
+        <h2 style="margin-top:0;">Capture Shiny Path</h2>
+        <input type="text" id="pathTitle" placeholder="Project Name" style="width:100%; padding:12px; margin-bottom:12px; background:var(--bg); border:1px solid var(--border); color:white; border-radius:8px;">
+        <textarea id="pathDesc" placeholder="What is the outcome?" style="width:100%; padding:12px; margin-bottom:12px; background:var(--bg); border:1px solid var(--border); color:white; height:80px; border-radius:8px;"></textarea>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+            <select id="pathCategory">
+                <option value="AI/ML">AI/ML</option>
+                <option value="Career">Career</option>
+                <option value="Personal">Personal</option>
+                <option value="Research">Research</option>
+            </select>
+            <select id="pathValue">
+                <option value="1">Value: Low</option>
+                <option value="3">Value: Med</option>
+                <option value="5">Value: High</option>
+            </select>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button onclick="closeModal()" class="actionBtn">Cancel [Esc]</button>
+            <button onclick="saveNewPath()" class="actionBtn" style="background:var(--good); color:black; font-weight:bold;">Save Path [Enter]</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let paths = JSON.parse(localStorage.getItem('shiny_paths')) || [];
+    const ACTIVE_LIMIT = 5;
+
+    function renderGraph() {
+        const svg = document.getElementById('graphSvg');
+        svg.innerHTML = '';
+        
+        const filter = document.getElementById('viewFilter').value;
+        const searchTerm = document.getElementById('mapSearch').value.toLowerCase();
+        
+        const filteredPaths = paths.filter(p => {
+            const matchesCategory = (filter === 'All' || p.category === filter);
+            const matchesSearch = p.title.toLowerCase().includes(searchTerm) || 
+                                  (p.description && p.description.toLowerCase().includes(searchTerm));
+            return matchesCategory && matchesSearch;
+        });
+
+        const categories = [...new Set(filteredPaths.map(p => p.category))];
+        const hubs = {};
+
+        categories.forEach((cat, i) => {
+            const angle = (i / categories.length) * Math.PI * 2;
+            hubs[cat] = { x: 500 + Math.cos(angle) * 280, y: 350 + Math.sin(angle) * 200 };
+            
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            g.setAttribute("class", "node hub");
+            g.innerHTML = `<circle class="node-shape" cx="${hubs[cat].x}" cy="${hubs[cat].y}" r="32"></circle>
+                           <text class="node-label" x="${hubs[cat].x}" y="${hubs[cat].y + 4}">${cat}</text>`;
+            svg.appendChild(g);
+        });
+
+        filteredPaths.forEach((path, i) => {
+            const hub = hubs[path.category];
+            if (!hub) return;
+            const angle = (i * 137.5) * (Math.PI / 180);
+            const dist = 75 + (i * 3);
+            const nx = hub.x + Math.cos(angle) * dist;
+            const ny = hub.y + Math.sin(angle) * dist;
+
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("class", "edge");
+            line.setAttribute("x1", hub.x); line.setAttribute("y1", hub.y);
+            line.setAttribute("x2", nx); line.setAttribute("y2", ny);
+            svg.appendChild(line);
+
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            g.setAttribute("class", `node status-${path.status.toLowerCase()}`);
+            g.onclick = () => selectNode(path.id);
+            g.innerHTML = `<circle class="node-shape" cx="${nx}" cy="${ny}" r="15"></circle>
+                           <text class="node-label" x="${nx}" y="${ny + 28}">${path.title}</text>`;
+            svg.appendChild(g);
+        });
+    }
+
+    function openNewPathModal() {
+        document.getElementById('pathTitle').value = '';
+        document.getElementById('pathDesc').value = '';
+        document.getElementById('pathCategory').selectedIndex = 0;
+        document.getElementById('pathValue').selectedIndex = 0;
+        document.getElementById('newPathModal').style.display = 'flex';
+        document.getElementById('pathTitle').focus();
+    }
+
+    function closeModal() {
+        document.getElementById('newPathModal').style.display = 'none';
+    }
+
+    function saveNewPath() {
+        const title = document.getElementById('pathTitle').value;
+        if (!title) return alert("Title required");
+        paths.push({
+            id: crypto.randomUUID(),
+            title,
+            description: document.getElementById('pathDesc').value,
+            category: document.getElementById('pathCategory').value,
+            value: parseInt(document.getElementById('pathValue').value),
+            status: 'Parked',
+            createdAt: new Date().toISOString()
+        });
+        localStorage.setItem('shiny_paths', JSON.stringify(paths));
+        document.getElementById('newPathModal').style.display = 'none';
+        renderGraph();
+    }
+
+    function selectNode(id) {
+        const path = paths.find(p => p.id === id);
+        document.getElementById('detailsHeader').innerHTML = `<div style="font-size:18px; font-weight:700;">${path.title}</div>`;
+        document.getElementById('detailsBody').innerHTML = `<p>${path.description || 'No description'}</p>`;
+        document.getElementById('detailsFooter').innerHTML = `
+            <button onclick="toggleActiveStatus('${path.id}')" class="actionBtn" style="flex:1">${path.status === 'Active' ? 'Park' : 'Promote'}</button>
+            <button onclick="deletePath('${path.id}')" class="actionBtn" style="color:#ff5a5a">Delete</button>
+        `;
+    }
+
+    function toggleActiveStatus(id) {
+        const path = paths.find(p => p.id === id);
+        if (path.status !== 'Active' && paths.filter(p => p.status === 'Active').length >= ACTIVE_LIMIT) {
+            return alert("WIP Limit reached!");
+        }
+        path.status = path.status === 'Active' ? 'Parked' : 'Active';
+        path.updatedAt = new Date().toISOString();
+        localStorage.setItem('shiny_paths', JSON.stringify(paths));
+        renderGraph();
+        selectNode(id);
+    }
+
+    function deletePath(id) {
+        if (confirm("Remove path?")) {
+            paths = paths.filter(p => p.id !== id);
+            localStorage.setItem('shiny_paths', JSON.stringify(paths));
+            renderGraph();
+        }
+    }
+
+    function exportData() {
+        const blob = new Blob([JSON.stringify(paths, null, 2)], {type: 'application/json'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'shiny-paths.json';
+        a.click();
+    }
+
+    // UPDATED: Syncs with the refinery server API
+async function importData() {
+        console.log("Attempting to sync with Distillery server...");
+        try {
+            // We use a relative path since the server is hosting this file
+            const res = await fetch('/api/final-paths');
+            const newNodes = await res.json();
+            
+            console.log("Data received from server:", newNodes);
+
+            if (newNodes && newNodes.length > 0) {
+                // This merges server data with any manual nodes you created
+                paths = newNodes; 
+                localStorage.setItem('shiny_paths', JSON.stringify(paths));
+                renderGraph();
+                alert(`Successfully imported ${paths.length} nodes from your refined history.`);
+            } else {
+                alert("The server found 0 nodes in shiny-paths.json. Approve some nodes in Staging first!");
+            }
+        } catch (err) {
+            console.error("Sync failed:", err);
+            alert("Connection error: Is your Staging_Server.py terminal still running?");
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        const isTyping = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+        if (e.key.toLowerCase() === 'n' && !isTyping) { e.preventDefault(); openNewPathModal(); }
+        if (e.key.toLowerCase() === 'i' && !isTyping) { e.preventDefault(); importData(); }
+        if (e.key === 'Escape') closeModal();
+        if (e.key === 'Enter' && document.getElementById('newPathModal').style.display === 'flex' && e.target.tagName !== 'TEXTAREA') saveNewPath();
+    });
+
+    window.onload = renderGraph;
+</script>
+</body>
+</html>
